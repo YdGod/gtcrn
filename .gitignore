@@ -1,0 +1,38 @@
+# ===== 论文 PDF（体积大，有版权） =====
+*.pdf
+
+# ===== macOS =====
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# ===== IDE & Editor =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ===== Jupyter =====
+.ipynb_checkpoints/
+*.ipynb
+
+# ===== 测试输出 =====
+test_wavs/*-enhanced.wav
+test_wavs/Game-noise.wav
+
+# ===== 临时笔记 =====
+上下文*.md
+学习路径.md
+
+# ===== Rust 构建产物 =====
+ladspa/target/

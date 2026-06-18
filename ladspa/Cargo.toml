@@ -1,68 +1,75 @@
+# GTCRN LADSPA ORT - Rust 项目配置
+# 使用 ONNX Runtime 的 GTCRN 语音增强 LADSPA 插件
 [package]
-name = "gtcrn-ladspa-ort"
-version = "1.0.0"
-edition = "2021"
-authors = ["BigLinux"]
-license = "MIT"
-description = "GTCRN Speech Enhancement LADSPA plugin using ONNX Runtime"
+name = "gtcrn-ladspa-ort"           # 包名
+version = "1.0.0"                     # 版本号
+edition = "2021"                      # Rust 版本
+authors = ["BigLinux"]               # 作者
+license = "MIT"                       # 开源协议
+description = "使用 ONNX Runtime 的 GTCRN 语音增强 LADSPA 插件"
 readme = "README.md"
 
 [lib]
-name = "gtcrn_ladspa_ort"
-crate-type = ["cdylib"]
+name = "gtcrn_ladspa_ort"            # 编译生成的库名
+crate-type = ["cdylib"]              # 编译为C动态库（.so），供LADSPA主机加载
 
+# ==================== 构建特性 ====================
 [features]
-default = ["dynamic"]
+default = ["dynamic"]                # 默认：动态链接系统安装的onnxruntime
 
-# Dynamic linking - requires onnxruntime installed on system
-# Use: cargo build --release
-# Requires: pacman -S onnxruntime
+# 动态链接模式 —— 需要系统已安装 onnxruntime
+# 使用: cargo build --release
+# 要求: pacman -S onnxruntime (Arch) 或 apt install onnxruntime
 dynamic = ["ort/load-dynamic"]
 
-# Download prebuilt binaries - downloads ONNX Runtime from Microsoft
-# Use: cargo build --release --features download --no-default-features
-# No system dependency, downloads ~50MB binaries during build
+# 下载预编译模式 —— 从微软下载 ONNX Runtime 二进制文件
+# 使用: cargo build --release --features download --no-default-features
+# 无需系统依赖，构建时下载约50MB的二进制文件
 download = ["ort/download-binaries", "ort-sys/tls-rustls"]
 
-# Minimal build - uses custom-built minimal ONNX Runtime with dynamic linking
-# Use: ./build-minimal-docker.sh first, then: ./build.sh minimal
-# Produces plugin + libonnxruntime.so (2 files, ~6MB total)
+# 最小化构建 —— 使用 Docker 自定义编译的精简 ONNX Runtime
+# 使用: 先运行 ./build-minimal-docker.sh，然后: ./build.sh minimal
+# 生成：插件.so + libonnxruntime.so（两个文件，约6MB）
 minimal = []
 
-# Static build - embeds minimal ONNX Runtime into single .so file
-# Use: ./build-minimal-docker.sh first, then: ./build.sh static
-# Produces single plugin file (~6MB)
+# 静态构建 —— 将精简版 ONNX Runtime 嵌入到单个 .so 文件中
+# 使用: 先运行 ./build-minimal-docker.sh，然后: ./build.sh static
+# 生成：单个插件文件（约6MB），零外部依赖
 static = ["ort-sys/disable-linking"]
 
+# ==================== 依赖库 ====================
 [dependencies]
-# LADSPA plugin interface
+# LADSPA 插件接口封装
 ladspa = "0.3"
 
-# ONNX Runtime - features controlled by our features above
-# Using rc.11 (latest) which targets modern ORT APIs (compatible with 1.23.2)
+# ONNX Runtime Rust 绑定（特性由上面的 features 控制）
+# 使用 rc.11 版本（支持 ONNX Runtime 1.23.2 API）
 ort = { version = "2.0.0-rc.11", default-features = false }
 ort-sys = { version = "2.0.0-rc.11", default-features = false }
-ndarray = "0.16"
+ndarray = "0.16"                     # 多维数组（ORT 依赖）
 
-# Resampling for 48kHz <-> 16kHz conversion
+# rubato: 高质量重采样库（48kHz ↔ 16kHz 转换）
+# 因为 GTCRN 模型只支持 16kHz，而大多数音频系统运行在 48kHz
 rubato = "0.16"
 
-# Lock-free ring buffer for audio threading
+# ringbuf: 无锁环形缓冲区（实时音频线程间通信）
+# 生产者-消费者模式，避免锁带来的延迟
 ringbuf = "0.4"
 
-# FFT for STFT processing
+# realfft: 实数FFT库（用于 STFT/iSTFT 处理）
 realfft = "3.4"
 
-# Lazy static initialization
+# once_cell: 惰性初始化（单例模式）
 once_cell = "1.20"
 
+# ==================== 编译优化 ====================
 [profile.release]
-opt-level = 3
-lto = "thin"
-codegen-units = 1
-strip = true
+opt-level = 3                        # 最高优化级别
+lto = "thin"                         # 瘦链接时优化（平衡编译速度和性能）
+codegen-units = 1                    # 单代码生成单元（更好的内联优化）
+strip = true                         # 去除调试符号（减小文件体积）
 
-# Faster compilation for static build (used during ONNX Runtime compilation)
+# 静态构建时，编译 ONNX Runtime 使用低优化级别以加快编译速度
 [profile.release.build-override]
-opt-level = 0
-codegen-units = 16
+opt-level = 0                        # 不优化依赖编译
+codegen-units = 16                   # 多代码生成单元加速编译

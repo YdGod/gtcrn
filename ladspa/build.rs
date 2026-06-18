@@ -1,4 +1,14 @@
-// Build script for static linking of minimal ONNX Runtime
+// =============================================================================
+// GTCRN LADSPA 插件 Rust 构建脚本 (build.rs)
+// =============================================================================
+// 职责：
+// 1. 静态构建时：发现并链接精简版 ONNX Runtime 的静态库
+// 2. 将 ONNX 模型转换为 ORT 格式（优化后的 ONNX Runtime 专用格式）
+//
+// 注意：
+// - 此脚本在 cargo build 之前运行
+// - 链接静态库时，需正确处理 Abseil、protobuf 等依赖的顺序
+// =============================================================================
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -6,40 +16,42 @@ use std::path::PathBuf;
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
 
-    // Enable model conversion feature by default or strictly for this build
+    // 默认启用模型格式转换（ONNX → ORT 优化格式）
     convert_models(&manifest_dir);
 
-    // Only run this for the 'static' feature
+    // 非静态构建 → 跳过静态链接配置
     if !cfg!(feature = "static") {
         return;
     }
 
+    // ================= 静态链接：查找精简版 ONNX Runtime 库 =================
     let lib_dir = PathBuf::from(&manifest_dir)
-        .join("onnxruntime-minimal")
+        .join("onnxruntime-minimal")  // Docker 构建输出的目录
         .join("lib");
 
     if !lib_dir.exists() {
         panic!(
-            "Static ONNX Runtime libraries not found at {:?}. Run ./build-minimal-docker.sh first.",
+            "静态 ONNX Runtime 库未找到于 {:?}。请先运行 ./build-minimal-docker.sh。",
             lib_dir
         );
     }
 
+    // 告诉 rustc 在此目录搜索库文件
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
 
-    // Link the unified libonnxruntime.a composed by build.sh
-    // We use +whole-archive to ensure symbols like OrtGetApiBase are included
-    // even if not directly referenced by Rust code (required for ort crate initialization)
+    // 链接统一的 libonnxruntime.a（由 build.sh 中的 MRI 脚本合并所有 .a 文件）
+    // +whole-archive 确保 OrtGetApiBase 等符号被包含（即使 Rust 代码未直接引用）
     println!("cargo:rustc-link-lib=static:+whole-archive=onnxruntime");
 
-    // Auto-discover and link Abseil libraries (libabsl_*.a)
-    // We sort them to ensure deterministic build order, though cyclic deps might require groups.
+    // ================= 自动发现并链接 Abseil 库 =================
+    // Abseil 是 Google 的 C++ 基础库，ONNX Runtime 依赖它
+    // 按字母顺序排序以保持确定性构建
     let mut absl_libs = Vec::new();
     if let Ok(entries) = fs::read_dir(&lib_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().into_string().unwrap();
             if name.starts_with("libabsl_") && name.ends_with(".a") {
-                let lib_name = &name[3..name.len() - 2]; // remove "lib" and ".a"
+                let lib_name = &name[3..name.len() - 2]; // 去掉 "lib" 前缀和 ".a" 后缀
                 absl_libs.push(lib_name.to_string());
             }
         }
@@ -50,14 +62,13 @@ fn main() {
         println!("cargo:rustc-link-lib=static={}", lib);
     }
 
-    // Link other dependencies found in the dir
-    // We check existence to be safe
+    // ================= 链接其他必需的 C/C++ 依赖库 =================
     let deps = [
-        "protobuf",
-        "protobuf-lite",
-        "nsync_cpp",
-        "cpuinfo",
-        "flatbuffers",
+        "protobuf",        // Protocol Buffers（模型序列化）
+        "protobuf-lite",   // protobuf 精简版
+        "nsync_cpp",       // Google 的同步库
+        "cpuinfo",         // CPU 特性检测
+        "flatbuffers",     // FlatBuffers 序列化（ORT 内部使用）
     ];
     for dep in deps {
         let filename = format!("lib{}.a", dep);
@@ -66,30 +77,39 @@ fn main() {
         }
     }
 
-    // Link system libraries
-    println!("cargo:rustc-link-lib=pthread");
-    println!("cargo:rustc-link-lib=dl");
-    println!("cargo:rustc-link-lib=stdc++"); // Important for C++ runtime
+    // ================= 链接系统运行时库 =================
+    println!("cargo:rustc-link-lib=pthread");   // POSIX 线程
+    println!("cargo:rustc-link-lib=dl");        // 动态链接库加载
+    println!("cargo:rustc-link-lib=stdc++");    // C++ 标准库（ORT 是 C++ 编写的）
 }
 
+/// 将 ONNX 模型转换为 ORT 优化格式
+///
+/// ORT 格式是 ONNX Runtime 的专有格式，相比原始 ONNX：
+/// - 消除了不必要的 Range 等算子
+/// - 预分配了内存布局
+/// - 减少了首次加载时间
 fn convert_models(manifest_dir: &str) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    // Define models to process: (source_name, output_name)
-    // Source path is relative to manifest_dir + ../stream/onnx_models
+
+    // 定义需要转换的模型：(源文件名, 输出文件名)
     let models = [
-        ("gtcrn.onnx", "gtcrn.ort"),
-        ("gtcrn_simple.onnx", "gtcrn_simple.ort"),
+        ("gtcrn.onnx", "gtcrn.ort"),            // 完整质量模型
+        ("gtcrn_simple.onnx", "gtcrn_simple.ort"), // 轻量简化模型
     ];
 
+    // 模型文件路径
     let stream_dir = PathBuf::from(manifest_dir)
         .parent()
         .unwrap()
         .join("stream")
         .join("onnx_models");
+
+    // Python 虚拟环境路径（用于运行 onnxruntime 转换工具）
     let python_path = PathBuf::from(manifest_dir).join(".venv/bin/python");
 
     if !python_path.exists() {
-        println!("cargo:warning=Python venv not found at {:?}, skipping model conversion. Ensure .venv exists if you need to convert models.", python_path);
+        println!("cargo:warning=Python 虚拟环境未找到于 {:?}, 跳过模型转换。如需转换模型，请创建 .venv。", python_path);
         return;
     }
 
@@ -97,17 +117,18 @@ fn convert_models(manifest_dir: &str) {
         let src_path = stream_dir.join(src_name);
         let dst_path = out_dir.join(dst_name);
 
+        // 当源文件变化时重新运行此脚本
         println!("cargo:rerun-if-changed={}", src_path.display());
 
         if !src_path.exists() {
             println!(
-                "cargo:warning=Source model not found at {:?}, skipping conversion.",
+                "cargo:warning=源模型文件未找到于 {:?}, 跳过转换。",
                 src_path
             );
             continue;
         }
 
-        // Check if we need to convert (dst doesn't exist or src is newer)
+        // 判断是否需要重新转换（目标不存在 或 源文件更新）
         let should_convert = if !dst_path.exists() {
             true
         } else {
@@ -117,7 +138,7 @@ fn convert_models(manifest_dir: &str) {
         };
 
         if should_convert {
-            println!("Converting {} to ORT format...", src_name);
+            println!("正在将 {} 转换为 ORT 格式...", src_name);
             let status = std::process::Command::new(&python_path)
                 .args([
                     "-m",
@@ -126,21 +147,15 @@ fn convert_models(manifest_dir: &str) {
                     "--output_dir",
                     out_dir.to_str().unwrap(),
                     "--optimization_style",
-                    "Fixed", // Use "Fixed" for pre-optimized models or "Runtime"
-                             // Note: If using "Fixed", we might want to check the specific flags.
-                             // For now, default behavior of the tool is usually sufficient.
-                             // The tool output filename might default to model.ort, we need to handle renaming if needed,
-                             // but usually it keeps the basename.
+                    "Fixed",  // Fixed = 固定优化（适用于已预优化的模型）
+                              // Runtime = 运行时优化（首次加载时优化）
                 ])
                 .status()
-                .expect("Failed to run conversion command");
+                .expect("模型转换命令执行失败");
 
             if !status.success() {
-                panic!("Model conversion failed for {}", src_name);
+                panic!("模型转换失败: {}", src_name);
             }
-
-            // The tool might invoke "saved to <out_dir>/gtcrn.ort"
-            // Ensure the expected output name matches
         }
     }
 }

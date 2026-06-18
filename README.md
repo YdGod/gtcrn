@@ -49,6 +49,21 @@ The inference procedure is presented in `infer.py`.
 ## Streaming Inference
 A streaming GTCRN is provided in `stream` folder, which demonstrates an impressive real-time factor (RTF) of **0.07** on the 12th Gen Intel(R) Core(TM) i5-12400 CPU @ 2.50 GHz.
 
+## Bug Fixes
+
+The following issues in the streaming module have been identified and fixed (see `修改结果对比.md` for detailed before/after code comparison):
+
+| # | File | Issue | Fix |
+|---|------|-------|-----|
+| 1 | `stream/modules/convolution.py` | `StreamConv1d` used internal attr `self.Conv1d` (no "Stream" prefix), causing state_dict key mismatch in `convert_to_stream` | Renamed to `self.StreamConv1d` |
+| 2 | `stream/modules/convolution.py` | `StreamConv2d` used internal attr `self.Conv2d`, same key mismatch | Renamed to `self.StreamConv2d` |
+| 3 | `stream/modules/convolution.py` | `StreamConvTranspose2d` used internal attr `self.ConvTranspose2d`, same key mismatch | Renamed to `self.StreamConvTranspose2d` |
+| 4 | `stream/modules/convolution.py` | Test 3 set `padding=(4,1)` for `StreamConvTranspose2d`, violating `assert T_pad == 0` (causal constraint) | Changed to `padding=(0,1)` — time-domain causal padding is handled by the cache mechanism, not by Conv2d padding |
+| 5 | `stream/modules/convert.py` | Grouped convolution weight conversion used `permute([1,0,2,3])` which only works for `groups=1`; for `groups>1` the shape `(in, out/g, kT, kF)` → `(out, in/g, kT, kF)` was not handled | Rewrote using `reshape(groups, in/g, out/g, kT, kF) → permute(0,2,1,3,4) → reshape(out, in/g, kT, kF)`, correctly handling any number of groups |
+| 6 | `stream/gtcrn.py` | `convert_to_stream(stream_model, stream_model)` passed the untrained stream model as both source and target, keeping random initialization weights | Changed second argument to `model` (the pre-trained offline model) |
+
+**Verification**: All streaming modules produce output within floating-point precision (`< 1e-6`) compared to their offline counterparts.
+
 ## Related Repositories
 [SEtrain](https://github.com/Xiaobin-Rong/SEtrain): A training code template for DNN-based speech enhancement.
 
