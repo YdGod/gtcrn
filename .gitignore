@@ -33,6 +33,6 @@ test_wavs/Game-noise.wav
 # ===== 临时笔记 =====
 上下文*.md
 学习路径.md
-
+论文解析.md
 # ===== Rust 构建产物 =====
 ladspa/target/
